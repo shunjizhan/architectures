@@ -1,0 +1,55 @@
+sequenceDiagram
+    participant User as User/dApp
+    participant Gateway as Gateway Contract
+    participant Agent as Agent Contract
+    participant Assets as Assets Library
+    participant Relayer as Message Relayer
+    participant ETHLC as Ethereum Light Client (BridgeHub)
+    participant InboundQ as InboundQueue Pallet (BridgeHub)
+    participant AssetHub as AssetHub Parachain
+    participant ForeignAssets as ForeignAssets Pallet
+    participant DestChain as Destination Parachain
+
+    User->>Gateway: sendToken(token, destinationChain, destinationAddress, destFee, amount)
+    Note over User, Gateway: User must have first approved Gateway as token spender
+
+    Gateway->>Assets: verifyToken(token)
+    Note over Assets: Check if token is registered
+
+    Gateway->>Gateway: Calculate required fee
+    Gateway->>User: Check if enough fee is provided
+
+    Gateway->>Agent: transferFrom(token, user, agent, amount)
+    Note over Agent: Token held in escrow by appropriate Agent contract
+
+    Gateway->>Gateway: _submitOutbound(message)
+    Gateway->>Gateway: Take fees & save nonce
+    Gateway->>User: Return transaction receipt
+    Gateway-->>Relayer: Emit OutboundMessageAccepted event
+
+    Relayer->>Relayer: Monitor Ethereum for events
+    Relayer->>Relayer: Construct transaction receipt proof
+    Relayer->>Relayer: Generate Merkle proof linking receipt to block
+    Relayer->>ETHLC: submit_execution_header()
+    Note over ETHLC: Verify execution header<br/>Store execution headers
+
+    Relayer->>InboundQ: submit_message_with_proof()
+    InboundQ->>ETHLC: verify_receipt_proof()
+    ETHLC->>InboundQ: Return verification result
+
+    Note over InboundQ: If valid:<br/>1. Decode message<br/>2. Construct XCM
+
+    alt Direct to AssetHub (destinationChain=1000)
+        InboundQ->>AssetHub: Send XCM message
+        AssetHub->>ForeignAssets: mint_into(who, amount)
+        Note over ForeignAssets: Create/mint tokens to destination address
+    else To another Parachain
+        InboundQ->>AssetHub: Send XCM message
+        AssetHub->>ForeignAssets: mint_into(sovereign_account, amount)
+        Note over ForeignAssets: Mint tokens to parachain's sovereign account
+        AssetHub->>DestChain: Send reserve_transfer_assets XCM
+        Note over DestChain: Process based on parachain's local configuration
+    end
+
+    ForeignAssets-->>Relayer: Emit events for monitoring
+    Relayer->>Relayer: Log successful token transfer

@@ -1,0 +1,41 @@
+sequenceDiagram
+    participant User as User/dApp
+    participant Gateway as Gateway Contract
+    participant Assets as Assets Library
+    participant Relayer as Snowbridge Relayer
+    participant ETHLC as Ethereum Light Client (BridgeHub)
+    participant InboundQ as InboundQueue Pallet (BridgeHub)
+    participant AssetHub as AssetHub Parachain
+    participant ForeignAssets as ForeignAssets Pallet
+
+    User->>Gateway: registerToken(address token)
+    Gateway->>Assets: registerToken(address token)
+    Note over Assets: Verify token is a contract<br/>Create TokenInfo<br/>Set isRegistered = true
+    Assets->>Gateway: Return Ticket structure with fees & destination
+    Gateway->>Gateway: _submitOutbound(ticket)
+    Gateway->>Gateway: Take fees & save nonce
+    Gateway->>User: Return transaction receipt
+    Gateway-->>Relayer: Emit OutboundMessageAccepted event
+
+    Relayer->>Relayer: Monitor Ethereum for events
+    Relayer->>Relayer: Construct transaction receipt proof
+    Relayer->>Relayer: Generate Merkle proof linking receipt to block
+    Relayer->>ETHLC: submit_execution_header()
+    Note over ETHLC: Verify execution header<br/>Store execution headers
+
+    Relayer->>InboundQ: submit_message_with_proof()
+    InboundQ->>ETHLC: verify_receipt_proof()
+    ETHLC->>InboundQ: Return verification result
+
+    Note over InboundQ: If valid:<br/>1. Decode message<br/>2. Construct XCM
+    InboundQ->>AssetHub: Send XCM message
+
+    AssetHub->>ForeignAssets: force_create()
+    Note over ForeignAssets: Create MultiLocation identifier for token<br/>Generate asset ID from Ethereum chain_id + address
+
+    AssetHub->>ForeignAssets: force_set_metadata()
+    Note over ForeignAssets: Set name, symbol, decimals<br/>from ERC20 token metadata
+
+    ForeignAssets-->>Relayer: Emit Created event
+    Relayer->>Relayer: Monitor for confirmation
+    Relayer->>Relayer: Log successful token registration

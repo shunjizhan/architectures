@@ -1,0 +1,62 @@
+sequenceDiagram
+    participant User as User/dApp
+    participant AssetHub as AssetHub Parachain
+    participant XCM as XCM Pallet
+    participant BridgeHub as BridgeHub Parachain
+    participant OutboundQ as OutboundQueue Pallet
+    participant BEEFY as BEEFY Consensus
+    participant BeefyRelay as BEEFY Relayer
+    participant MsgRelay as Message Relayer
+    participant BeefyClient as BEEFY Light Client (Ethereum)
+    participant Gateway as Gateway Contract
+    participant Verification as Verification Library
+    participant Assets as Assets Library
+
+    User->>AssetHub: reserve_transfer_assets() via XCM
+    AssetHub->>XCM: Process XCM message
+    XCM->>BridgeHub: Forward message to BridgeHub
+
+    BridgeHub->>OutboundQ: enqueue_message()
+    Note over OutboundQ: 1. Assign nonce to message<br/>2. Convert to Ethereum command<br/>3. Store in MessageQueue pallet
+
+    OutboundQ->>OutboundQ: Process queue at block end
+    OutboundQ->>OutboundQ: Generate merkle root of messages
+    OutboundQ->>BridgeHub: Insert merkle root as digest item in header
+
+    BridgeHub->>BEEFY: Parachain header included in relay chain block
+    Note over BEEFY: Validators sign commitment including<br/>MMR leaf containing parachain headers
+    BEEFY-->>BeefyRelay: Emit signed BEEFY commitment
+
+    BeefyRelay->>BeefyRelay: Monitor for new BEEFY commitments
+    BeefyRelay->>BeefyRelay: queryNonces() to check if parachain nonce > ethereum nonce
+    Note over BeefyRelay: If nonces differ and not rate-limited,<br/>initiate sync for new BEEFY block
+
+    BeefyRelay->>BeefyClient: submitInitial(commitment, signature, initialBitfield)
+    Note over BeefyClient: Store initial commitment hash<br/>Verify initial validator signature
+
+    BeefyRelay->>BeefyRelay: Wait for MAX_SEED_LOOKAHEAD blocks
+
+    BeefyRelay->>BeefyClient: commitPrevRandao()
+    Note over BeefyClient: Use Ethereum RANDAO as randomness source<br/>Select random validator subset from bitfield
+
+    BeefyRelay->>BeefyClient: submitFinal(signatures[])
+    Note over BeefyClient: Verify signatures from selected validators<br/>If valid, accept BEEFY commitment<br/>Update validator set if needed
+
+    MsgRelay->>BridgeHub: fetchLatestParachainNonce()
+    MsgRelay->>Gateway: fetchEthereumNonce()
+    Note over MsgRelay: Compare nonces to determine<br/>if messages need relaying
+
+    MsgRelay->>BridgeHub: Get messages + generate proofs
+    Note over MsgRelay: Build proof chain:<br/>1. Message commitment<br/>2. Parachain header containing commitment<br/>3. MMR proof for parachain header
+
+    MsgRelay->>Gateway: submit(channelID, nonce, message, proof)
+    Gateway->>Verification: verify(beefyClient, proof)
+    Verification->>BeefyClient: Check if MMR proof is valid
+    BeefyClient->>Verification: Return verification result
+
+    Note over Gateway: If verified:<br/>1. Process message<br/>2. Update channel nonce
+
+    Gateway->>Assets: Process token message
+    Note over Assets: For transfers:<br/>- If token from Ethereum: release from escrow<br/>- If token from Polkadot: mint wrapper
+
+    Assets->>User: Transfer tokens to recipient address
