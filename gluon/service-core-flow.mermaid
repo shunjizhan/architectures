@@ -1,0 +1,61 @@
+graph TD
+    %% Top row: Services subgraph (center)
+    subgraph Services
+        S{"signer(s)"}
+        FC{"flow-controller"}
+        DS{"data"}
+    end
+
+    %% Middle row: Bridge node
+    Bridge[["(abstract) bridge"]]
+
+    %% Bottom row: TON contracts on left
+    subgraph "TON Contracts"
+        V1["gluon vault #1"]
+        V2["gluon vault #2"]
+        Vn["gluon vault #N"]
+        MS2(("TON manager
+        (multisig-v2)"))
+    end
+
+    %% Bottom row: EVM contracts on right
+    subgraph "EVM Contracts"
+        SW(("ETH manager
+        (safe multisig)"))
+        O1["operator #1"]
+        O2["operator #2"]
+        O3["operator #N"]
+        SS["superstate"]
+        ET["ethena"]
+        AV["aave"]
+    end
+
+    %% Connections in TON contracts
+    V1 -- "withdraw  $50" --> MS2
+    V2 -- "withdraw  $100" --> MS2
+    Vn -- "withdraw  $300" --> MS2
+
+    %% Connect TON contracts to Bridge, and Bridge to EVM contracts
+    MS2 --> Bridge
+    Bridge --> SW
+
+    %% Connections in EVM contracts
+    SW -- "deposit $50" --> O1
+    SW -- "deposit $100" --> O2
+    SW -- "deposit $300" --> O3
+
+    O1 --> SS
+    O2 --> SS
+    O2 --> ET
+    O3 --> ET
+    O3 --> AV
+
+    %% Services connections
+    FC -- "propose and exec tx" --> MS2
+    FC -- "propose and exec tx" --> SW
+
+    S -- "sign tx" --> MS2
+    S -- "sign tx" --> SW
+
+    %% FC -- "query" --> DS
+    %% S -- "query" --> DS
